@@ -3,6 +3,16 @@
 A Dissect module implementing a parser for the XFS file system, commonly used by RedHat Linux distributions. For more
 information, please see [the documentation](https://dissect.readthedocs.io/en/latest/projects/dissect.xfs).
 
+## Installation
+
+`dissect.xfs` is available on [PyPI](https://pypi.org/project/dissect.xfs/).
+
+```bash
+pip install dissect.xfs
+```
+
+This module is also automatically installed if you install the `dissect` package.
+
 ## Build and test instructions
 
 This project uses `tox` to build source and wheel distributions. Run the following command from the root folder to build
