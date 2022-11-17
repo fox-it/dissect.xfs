@@ -1,13 +1,14 @@
-import os
 import io
-import stat
 import logging
-from uuid import UUID
+import os
+import stat
 from functools import lru_cache
+from uuid import UUID
 
-from dissect.util.stream import RangeStream, RunlistStream
 from dissect.util import ts
+from dissect.util.stream import RangeStream, RunlistStream
 
+from dissect.xfs.c_xfs import FILETYPES, c_xfs
 from dissect.xfs.exceptions import (
     Error,
     FileNotFoundError,
@@ -16,7 +17,6 @@ from dissect.xfs.exceptions import (
     SymlinkUnavailableException,
     UnsupportedDataforkException,
 )
-from dissect.xfs.c_xfs import c_xfs, FILETYPES
 
 log = logging.getLogger(__name__)
 log.setLevel(os.getenv("DISSECT_LOG_XFS", "CRITICAL"))
@@ -292,7 +292,7 @@ class INode:
             if link.startswith("/"):
                 relnode = None
             elif link.startswith("../"):
-                relnode = self.parent.parent
+                relnode = self.parent
                 if relnode is None:
                     raise SymlinkUnavailableException(f"{self!r} is a symlink to another filesystem")
             else:
