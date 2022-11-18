@@ -281,7 +281,7 @@ class INode:
 
                 self._link = fh.read(header.sl_bytes).decode()
             else:
-                self._link = self.open().read(self.size).decode()
+                self._link = self.open().read().decode()
         return self._link
 
     @property
@@ -450,8 +450,8 @@ class INode:
         else:
             size = self.ag.sb.sb_inodesize - offset
 
-        if self.inode.di_forkoff:
-            size -= size - self.inode.di_forkoff * 8
+            if self.inode.di_forkoff:
+                size -= size - self.inode.di_forkoff * 8
 
         return RangeStream(self._buf, offset, size)
 
