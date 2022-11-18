@@ -352,7 +352,7 @@ class INode:
 
                 for _ in range(header.count):
                     entry = c_xfs.xfs_dir2_sf_entry(buf)
-                    fname = entry.name.decode("utf-8", "surrogateescape")
+                    fname = entry.name.decode(errors="surrogateescape")
                     ftype = c_xfs.uint8(buf) if self.xfs._has_ftype else 0
                     inum = inum_s(buf)
 
@@ -431,7 +431,7 @@ class INode:
                         else:
                             ftype = None
 
-                        fname = entry.name.decode("utf-8", "surrogateescape")
+                        fname = entry.name.decode(errors="surrogateescape")
 
                         dirs[fname] = self.xfs.get_inode(inum, fname, ftype, parent=self, lazy=True)
             else:
