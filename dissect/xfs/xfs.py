@@ -45,7 +45,7 @@ class XFS:
         self._lblock_s = c_xfs.xfs_btree_lblock_v5 if self._has_crc else c_xfs.xfs_btree_lblock
         self._sblock_s = c_xfs.xfs_btree_sblock_v5 if self._has_crc else c_xfs.xfs_btree_sblock
 
-        self.name = self.sb.sb_fname.split(b"\x00")[0].decode()
+        self.name = self.sb.sb_fname.split(b"\x00")[0].decode(errors="surrogateescape")
         self.uuid = UUID(bytes=self.sb.sb_uuid)
         self.meta_uuid = UUID(bytes=self.sb.sb_meta_uuid)
 
@@ -279,9 +279,9 @@ class INode:
                 if header.sl_magic != c_xfs.XFS_SYMLINK_MAGIC:
                     raise NotASymlinkError(f"{self!r} has invalid symlink magic")
 
-                self._link = fh.read(header.sl_bytes).decode()
+                self._link = fh.read(header.sl_bytes).decode(errors="surrogateescape")
             else:
-                self._link = self.open().read().decode()
+                self._link = self.open().read().decode(errors="surrogateescape")
         return self._link
 
     @property
