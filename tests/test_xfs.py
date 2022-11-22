@@ -1,5 +1,8 @@
 import datetime
+import gzip
 import stat
+
+import pytest
 
 from dissect.xfs.xfs import XFS
 
@@ -24,3 +27,25 @@ def test_xfs(xfs_bin):
     test_link = xfs.get("test_link")
     assert test_link.filetype == stat.S_IFLNK
     assert test_link.link == "test_dir/test_file"
+
+
+@pytest.mark.parametrize(
+    "image_file",
+    [
+        ("tests/data/xfs_symlink_test1.bin.gz"),
+        ("tests/data/xfs_symlink_test2.bin.gz"),
+        ("tests/data/xfs_symlink_test3.bin.gz"),
+    ],
+)
+def test_symlinks(image_file):
+
+    path = "/path/to/dir/with/file.ext"
+    expect = b"resolved!\n"
+
+    def resolve(node):
+        while node.filetype == stat.S_IFLNK:
+            node = node.link_inode
+        return node
+
+    with gzip.open(image_file, "rb") as disk:
+        assert resolve(XFS(disk).get(path)).open().read() == expect

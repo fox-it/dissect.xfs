@@ -1,13 +1,14 @@
-import os
 import io
-import stat
 import logging
-from uuid import UUID
+import os
+import stat
 from functools import lru_cache
+from uuid import UUID
 
-from dissect.util.stream import RangeStream, RunlistStream
 from dissect.util import ts
+from dissect.util.stream import RangeStream, RunlistStream
 
+from dissect.xfs.c_xfs import FILETYPES, c_xfs
 from dissect.xfs.exceptions import (
     Error,
     FileNotFoundError,
@@ -16,7 +17,6 @@ from dissect.xfs.exceptions import (
     SymlinkUnavailableException,
     UnsupportedDataforkException,
 )
-from dissect.xfs.c_xfs import c_xfs, FILETYPES
 
 log = logging.getLogger(__name__)
 log.setLevel(os.getenv("DISSECT_LOG_XFS", "CRITICAL"))
@@ -45,7 +45,7 @@ class XFS:
         self._lblock_s = c_xfs.xfs_btree_lblock_v5 if self._has_crc else c_xfs.xfs_btree_lblock
         self._sblock_s = c_xfs.xfs_btree_sblock_v5 if self._has_crc else c_xfs.xfs_btree_sblock
 
-        self.name = self.sb.sb_fname.split(b"\x00")[0].decode()
+        self.name = self.sb.sb_fname.split(b"\x00")[0].decode(errors="surrogateescape")
         self.uuid = UUID(bytes=self.sb.sb_uuid)
         self.meta_uuid = UUID(bytes=self.sb.sb_meta_uuid)
 
@@ -279,9 +279,9 @@ class INode:
                 if header.sl_magic != c_xfs.XFS_SYMLINK_MAGIC:
                     raise NotASymlinkError(f"{self!r} has invalid symlink magic")
 
-                self._link = fh.read(header.sl_bytes).decode()
+                self._link = fh.read(header.sl_bytes).decode(errors="surrogateescape")
             else:
-                self._link = self.open().read(self.size).decode()
+                self._link = self.open().read().decode(errors="surrogateescape")
         return self._link
 
     @property
@@ -292,7 +292,7 @@ class INode:
             if link.startswith("/"):
                 relnode = None
             elif link.startswith("../"):
-                relnode = self.parent.parent
+                relnode = self.parent
                 if relnode is None:
                     raise SymlinkUnavailableException(f"{self!r} is a symlink to another filesystem")
             else:
@@ -352,7 +352,7 @@ class INode:
 
                 for _ in range(header.count):
                     entry = c_xfs.xfs_dir2_sf_entry(buf)
-                    fname = entry.name.decode("utf-8", "surrogateescape")
+                    fname = entry.name.decode(errors="surrogateescape")
                     ftype = c_xfs.uint8(buf) if self.xfs._has_ftype else 0
                     inum = inum_s(buf)
 
@@ -431,7 +431,7 @@ class INode:
                         else:
                             ftype = None
 
-                        fname = entry.name.decode("utf-8", "surrogateescape")
+                        fname = entry.name.decode(errors="surrogateescape")
 
                         dirs[fname] = self.xfs.get_inode(inum, fname, ftype, parent=self, lazy=True)
             else:
@@ -447,23 +447,22 @@ class INode:
         offset = 0xB0 if self.inode.di_version == 0x3 else 0x64
         if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL:
             size = self.size
+        elif self.inode.di_forkoff:
+            size = self.inode.di_forkoff * 8
         else:
             size = self.ag.sb.sb_inodesize - offset
 
-        if self.inode.di_forkoff:
-            size -= size - self.inode.di_forkoff * 8
+        return RangeStream(self._buf, offset, size)
 
         return RangeStream(self._buf, offset, size)
 
     def attrfork(self):
-        offset = self.inode.di_forkoff * 8
-        if offset == 0:
+        if self.inode.di_forkoff == 0:
             raise Error(f"{self!r} has no extended attributes")
 
-        if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL:
-            size = self.size
-        else:
-            size = self.ag.sb.sb_inodesize - offset
+        offset = 0xB0 if self.inode.di_version == 0x3 else 0x64
+        offset += self.inode.di_forkoff * 8
+        size = self.ag.sb.sb_inodesize - offset
 
         return RangeStream(self._buf, offset, size)
 
