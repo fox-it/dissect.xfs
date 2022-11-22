@@ -270,7 +270,6 @@ class INode:
     def link(self):
         if self.filetype != stat.S_IFLNK:
             raise NotASymlinkError(f"{self!r} is not a symlink")
-
         if not self._link:
             if self.inode.di_format != c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL and self.xfs.version == 5:
                 fh = self.open()
@@ -447,23 +446,22 @@ class INode:
         offset = 0xB0 if self.inode.di_version == 0x3 else 0x64
         if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL:
             size = self.size
+        elif self.inode.di_forkoff:
+            size = self.inode.di_forkoff * 8
         else:
             size = self.ag.sb.sb_inodesize - offset
 
-            if self.inode.di_forkoff:
-                size -= size - self.inode.di_forkoff * 8
+        return RangeStream(self._buf, offset, size)
 
         return RangeStream(self._buf, offset, size)
 
     def attrfork(self):
-        offset = self.inode.di_forkoff * 8
-        if offset == 0:
+        if self.inode.di_forkoff == 0:
             raise Error(f"{self!r} has no extended attributes")
 
-        if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL:
-            size = self.size
-        else:
-            size = self.ag.sb.sb_inodesize - offset
+        offset = 0xB0 if self.inode.di_version == 0x3 else 0x64
+        offset += self.inode.di_forkoff * 8
+        size = self.ag.sb.sb_inodesize - offset
 
         return RangeStream(self._buf, offset, size)
 
