@@ -270,6 +270,7 @@ class INode:
     def link(self):
         if self.filetype != stat.S_IFLNK:
             raise NotASymlinkError(f"{self!r} is not a symlink")
+
         if not self._link:
             if self.inode.di_format != c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL and self.xfs.version == 5:
                 fh = self.open()
