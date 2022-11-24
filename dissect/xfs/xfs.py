@@ -454,8 +454,6 @@ class INode:
 
         return RangeStream(self._buf, offset, size)
 
-        return RangeStream(self._buf, offset, size)
-
     def attrfork(self):
         if self.inode.di_forkoff == 0:
             raise Error(f"{self!r} has no extended attributes")
