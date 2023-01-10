@@ -155,7 +155,7 @@ class XFS:
                 block = agnum * self.sb.sb_agblocks + blknum
                 fh.seek(block * self.block_size)
 
-                for res in self._walk_tree(self._lblock_s(fh), leaf_size, magic):
+                for res in self._walk_large_tree(self._lblock_s(fh), leaf_size, magic):
                     yield res
 
 
