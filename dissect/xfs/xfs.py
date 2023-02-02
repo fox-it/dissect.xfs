@@ -262,7 +262,6 @@ class INode:
     @property
     def filetype(self):
         if not self._filetype:
-
             self._filetype = stat.S_IFMT(self.inode.di_mode)
         return self._filetype
 
