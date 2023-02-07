@@ -8,7 +8,6 @@ from dissect.xfs.exceptions import (
 )
 from dissect.xfs.xfs import XFS
 
-
 __all__ = [
     "XFS",
     "Error",
