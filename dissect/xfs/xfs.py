@@ -55,7 +55,6 @@ class XFS:
         if isinstance(path, int):
             return self.get_inode(path)
 
-        path = path.replace("\\", "/")
         node = node if node else self.root
 
         parts = path.split("/")
