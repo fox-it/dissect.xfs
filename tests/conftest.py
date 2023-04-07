@@ -19,5 +19,10 @@ def xfs_bin():
 
 
 @pytest.fixture
+def xfs_sparse_bin():
+    yield from gzip_file("data/xfs_sparse.bin.gz")
+
+
+@pytest.fixture
 def xfs_bigtime_bin():
     yield from gzip_file("data/xfs_bigtime.bin.gz")
