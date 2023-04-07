@@ -29,6 +29,17 @@ def test_xfs(xfs_bin):
     assert test_link.link == "test_dir/test_file"
 
 
+def test_xfs_bigtime(xfs_bigtime_bin):
+    xfs = XFS(xfs_bigtime_bin)
+
+    assert xfs.version == 5
+
+    test_file = xfs.get("file")
+    assert test_file._has_bigtime()
+    assert test_file.crtime == datetime.datetime(2023, 4, 7, 9, 15, 9, 223364, tzinfo=datetime.timezone.utc)
+    assert test_file.crtime_ns == 1680858909223364005
+
+
 @pytest.mark.parametrize(
     "image_file",
     [
