@@ -47,8 +47,8 @@ class XFS:
         # Not necessarily correct for the last AG, but doesn't harm
         self._ag_size = self.sb.sb_agblocks * self.block_size
 
-        self._lblock_s = c_xfs.xfs_btree_lblock_v5 if self._has_crc else c_xfs.xfs_btree_lblock
-        self._sblock_s = c_xfs.xfs_btree_sblock_v5 if self._has_crc else c_xfs.xfs_btree_sblock
+        self._lblock_s = c_xfs.xfs_btree_lblock_crc if self._has_crc else c_xfs.xfs_btree_lblock
+        self._sblock_s = c_xfs.xfs_btree_sblock_crc if self._has_crc else c_xfs.xfs_btree_sblock
 
         self.name = self.sb.sb_fname.split(b"\x00")[0].decode(errors="surrogateescape")
         self.uuid = UUID(bytes=self.sb.sb_uuid)
@@ -273,9 +273,29 @@ class INode:
             self._inode = self._read_inode()
         return self._inode
 
+    def _has_bigtime(self) -> bool:
+        return self.inode.di_version >= 3 and self.inode.di_flags2 & c_xfs.XFS_DIFLAG2_BIGTIME != 0
+
+    def _has_large_extent_counts(self) -> bool:
+        return self.inode.di_version >= 3 and self.inode.di_flags2 & c_xfs.XFS_DIFLAG2_NREXT64 != 0
+
     @property
     def size(self) -> int:
         return self.inode.di_size
+
+    @property
+    def data_extents(self) -> int:
+        if self._has_large_extent_counts():
+            return self.inode.di_big_nextents
+        # Actually di_nextents, but we optimized the union away
+        return self.inode.di_big_anextents
+
+    @property
+    def attr_extents(self) -> int:
+        if self._has_large_extent_counts():
+            return self.inode.di_big_anextents
+        # Actually di_anextents, but we optimized the union away
+        return self.inode.di_nrext64_pad
 
     @property
     def filetype(self) -> int:
@@ -323,7 +343,7 @@ class INode:
 
     @property
     def atime_ns(self) -> int:
-        return (self.inode.di_atime.t_sec * 1000000000) + self.inode.di_atime.t_nsec
+        return _parse_ts(self.inode.di_atime, self._has_bigtime())
 
     @property
     def mtime(self) -> datetime:
@@ -331,7 +351,7 @@ class INode:
 
     @property
     def mtime_ns(self) -> int:
-        return (self.inode.di_mtime.t_sec * 1000000000) + self.inode.di_mtime.t_nsec
+        return _parse_ts(self.inode.di_mtime, self._has_bigtime())
 
     @property
     def ctime(self) -> datetime:
@@ -339,7 +359,7 @@ class INode:
 
     @property
     def ctime_ns(self) -> int:
-        return (self.inode.di_ctime.t_sec * 1000000000) + self.inode.di_ctime.t_nsec
+        return _parse_ts(self.inode.di_ctime, self._has_bigtime())
 
     @property
     def crtime(self) -> datetime:
@@ -347,7 +367,7 @@ class INode:
 
     @property
     def crtime_ns(self) -> int:
-        return (self.inode.di_crtime.t_sec * 1000000000) + self.inode.di_crtime.t_nsec
+        return _parse_ts(self.inode.di_crtime, self._has_bigtime())
 
     def listdir(self) -> dict[str, INode]:
         if self.filetype != stat.S_IFDIR:
@@ -390,7 +410,7 @@ class INode:
                     tail = c_xfs.xfs_dir2_block_tail(block)
                     block.seek(0)
 
-                    if self.inode.di_nextents > 1:
+                    if self.data_extents > 1:
                         entries_end = self.xfs.block_size
                     else:
                         entries_end = self.xfs.block_size
@@ -557,3 +577,12 @@ def fsb_to_bb(block: int, agblklog: int) -> tuple[int, int]:
     agnum = block >> agblklog
     blknum = block & ((1 << agblklog) - 1)
     return agnum, blknum
+
+
+def _parse_ts(ts: int, is_bigtime: bool) -> int:
+    if is_bigtime:
+        sec, nsec = divmod(ts, 1000000000)
+        sec -= 1 << 31
+    else:
+        sec, nsec = ts >> 32, ts & 0xFFFFFFFF
+    return (sec * 1000000000) + nsec
