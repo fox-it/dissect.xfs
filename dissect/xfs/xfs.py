@@ -506,48 +506,44 @@ class INode:
         if not self._runlist:
             runs = []
             run_offset = 0
+            expected_runs = (self.size + self.xfs.block_size - 1) // self.xfs.block_size
 
-            if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_EXTENTS:
-                buf = self.datafork().read(self.inode.di_nextents * 16)
-                for extent_num in range(self.inode.di_nextents):
-                    offset, block, count, _ = parse_fsblock(buf[extent_num * 16 : (extent_num + 1) * 16])
+            for offset, block, count, _ in self._iter_blocks():
+                if offset != run_offset:
+                    gap = offset - run_offset
+                    runs.append((None, gap))
+                    run_offset += gap
 
-                    # Sparse gaps
-                    if offset != run_offset:
-                        gap = offset - run_offset
-                        runs.append((None, gap))
-                        run_offset += gap
+                # Convert filesystem blocks to logical blocks
+                agnum, blknum = fsb_to_bb(block, self.ag.sb.sb_agblklog)
+                block = agnum * self.xfs.sb.sb_agblocks + blknum
 
-                    # Convert filesystem blocks to logical blocks
-                    agnum, blknum = fsb_to_bb(block, self.ag.sb.sb_agblklog)
-                    block = agnum * self.xfs.sb.sb_agblocks + blknum
+                runs.append((block, count))
+                run_offset += count
 
-                    runs.append((block, count))
-                    run_offset += count
-            elif self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_BTREE:
-                # B+tree extent lists are always large trees (64bit block numbers)
-                df = self.datafork()
-                root = c_xfs.xfs_bmdr_block(df)
-
-                # Pointers start around halfway
-                maxrecs = (df.size - 4) // 16
-                df.seek(4 + maxrecs * 8)
-                ptrs = c_xfs.uint64[root.bb_numrecs](df)
-
-                for ptr in ptrs:
-                    for offset, block, count, _ in self.ag.walk_extents(ptr):
-                        if offset != run_offset:
-                            gap = offset - run_offset
-                            runs.append((None, gap))
-                            run_offset += gap
-
-                        agnum, blknum = fsb_to_bb(block, self.ag.sb.sb_agblklog)
-                        block = agnum * self.xfs.sb.sb_agblocks + blknum
-                        runs.append((block, count))
-                        run_offset += count
+            if run_offset < expected_runs:
+                runs.append((None, expected_runs - run_offset))
 
             self._runlist = runs
         return self._runlist
+
+    def _iter_blocks(self) -> Iterator[tuple[int, int, int, int]]:
+        if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_EXTENTS:
+            buf = self.datafork().read(self.data_extents * 16)
+            for extent_num in range(self.data_extents):
+                yield parse_fsblock(buf[extent_num * 16 : (extent_num + 1) * 16])
+        elif self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_BTREE:
+            # B+tree extent lists are always large trees (64bit block numbers)
+            df = self.datafork()
+            root = c_xfs.xfs_bmdr_block(df)
+
+            # Pointers start around halfway
+            maxrecs = (df.size - 4) // 16
+            df.seek(4 + maxrecs * 8)
+            ptrs = c_xfs.uint64[root.bb_numrecs](df)
+
+            for ptr in ptrs:
+                yield from self.ag.walk_extents(ptr)
 
     def open(self) -> BinaryIO:
         if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL:

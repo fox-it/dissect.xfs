@@ -1,0 +1,6 @@
+tests/data/xfs_symlink_test1.bin.gz filter=lfs diff=lfs merge=lfs -text
+tests/data/xfs_symlink_test2.bin.gz filter=lfs diff=lfs merge=lfs -text
+tests/data/xfs_symlink_test3.bin.gz filter=lfs diff=lfs merge=lfs -text
+tests/data/xfs_bigtime.bin.gz filter=lfs diff=lfs merge=lfs -text
+tests/data/xfs.bin.gz filter=lfs diff=lfs merge=lfs -text
+tests/data/xfs_sparse.bin.gz filter=lfs diff=lfs merge=lfs -text
