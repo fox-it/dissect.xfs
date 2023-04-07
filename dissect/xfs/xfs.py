@@ -1,10 +1,15 @@
+from __future__ import annotations
+
 import io
 import logging
 import os
 import stat
+from datetime import datetime
 from functools import lru_cache
+from typing import BinaryIO, Iterator, Optional, Union
 from uuid import UUID
 
+from dissect.cstruct import Instance
 from dissect.util import ts
 from dissect.util.stream import RangeStream, RunlistStream
 
@@ -23,7 +28,7 @@ log.setLevel(os.getenv("DISSECT_LOG_XFS", "CRITICAL"))
 
 
 class XFS:
-    def __init__(self, fh):
+    def __init__(self, fh: BinaryIO):
         self.fh = fh
         self.ag = {0: AllocationGroup(self, fh, 0)}
         self.sb = self.ag[0].sb
@@ -51,7 +56,7 @@ class XFS:
 
         self.root = self.get_inode(self.sb.sb_rootino)
 
-    def get(self, path, node=None):
+    def get(self, path: Union[int, str], node: Optional[INode] = None) -> INode:
         if isinstance(path, int):
             return self.get_inode(path)
 
@@ -69,19 +74,17 @@ class XFS:
             if p not in dirlist:
                 raise FileNotFoundError(f"File not found: {path}")
 
-            node = dirlist[p]
-
         return node
 
-    def get_allocation_group(self, agnum):
+    def get_allocation_group(self, agnum: int) -> AllocationGroup:
         if agnum not in self.ag:
             self.ag[agnum] = AllocationGroup(self, RangeStream(self.fh, agnum * self._ag_size, self._ag_size), agnum)
         return self.ag[agnum]
 
-    def get_inode(self, absinum, *args, **kwargs):
+    def get_inode(self, absinum: int, *args, **kwargs) -> INode:
         return self.get_relative_inode(absinum >> self._inum_bits, absinum & self._inum_mask, *args, **kwargs)
 
-    def get_relative_inode(self, agnum, inum, *args, **kwargs):
+    def get_relative_inode(self, agnum: int, inum: int, *args, **kwargs) -> INode:
         if agnum >= self.sb.sb_agcount:
             raise Error(f"Allocation group num exceeds number of allocation groups: {agnum} >= {self.sb.sb_agcount}")
         elif inum >= self._inum_max:
@@ -89,30 +92,32 @@ class XFS:
 
         return self.get_allocation_group(agnum).get_inode(inum, *args, **kwargs)
 
-    def walk_agi(self, block, agnum):
+    def walk_agi(self, block: int, agnum: int) -> Iterator[Instance]:
         for record in self.walk_small_tree(block, agnum, 16, (c_xfs.XFS_IBT_MAGIC, c_xfs.XFS_IBT_CRC_MAGIC)):
             yield c_xfs.xfs_inobt_rec(record)
 
-    def walk_extents(self, block):
+    def walk_extents(self, block: int) -> Iterator[tuple[int, int, int, int]]:
         for record in self.walk_large_tree(block, 16, (c_xfs.XFS_BMAP_MAGIC, c_xfs.XFS_BMAP_CRC_MAGIC)):
             yield parse_fsblock(record)
 
-    def walk_large_tree(self, block, leaf_size, magic=None):
+    def walk_large_tree(self, block: int, leaf_size: int, magic: Optional[list[int]] = None) -> Iterator[bytes]:
         self.fh.seek(block * self.block_size)
         root = self._lblock_s(self.fh)
 
-        for record in self._walk_large_tree(root, leaf_size, magic):
-            yield record
+        yield from self._walk_large_tree(root, leaf_size, magic)
 
-    def walk_small_tree(self, block, agnum, leaf_size, magic=None):
+    def walk_small_tree(
+        self, block: int, agnum: int, leaf_size: int, magic: Optional[list[int]] = None
+    ) -> Iterator[bytes]:
         block = agnum * self.sb.sb_agblocks + block
         self.fh.seek(block * self.block_size)
         root = self._sblock_s(self.fh)
 
-        for record in self._walk_small_tree(root, leaf_size, agnum, magic):
-            yield record
+        yield from self._walk_small_tree(root, leaf_size, agnum, magic)
 
-    def _walk_small_tree(self, node, leaf_size, agnum, magic=None):
+    def _walk_small_tree(
+        self, node: Instance, leaf_size: int, agnum: int, magic: Optional[list[int]] = None
+    ) -> Iterator[bytes]:
         fh = self.fh
         if magic and node.bb_magic not in magic:
             magic_values = ", ".join([f"0x{magic_value:x}" for magic_value in magic])
@@ -131,10 +136,9 @@ class XFS:
                 block = agnum * self.sb.sb_agblocks + ptr
                 fh.seek(block * self.block_size)
 
-                for res in self._walk_small_tree(self._sblock_s(fh), leaf_size, agnum, magic):
-                    yield res
+                yield from self._walk_small_tree(self._sblock_s(fh), leaf_size, agnum, magic)
 
-    def _walk_large_tree(self, node, leaf_size, magic=None):
+    def _walk_large_tree(self, node: Instance, leaf_size: int, magic: Optional[list[int]] = None) -> Iterator[bytes]:
         fh = self.fh
         if magic and node.bb_magic not in magic:
             magic_values = ", ".join([f"0x{magic_value:x}" for magic_value in magic])
@@ -154,12 +158,11 @@ class XFS:
                 block = agnum * self.sb.sb_agblocks + blknum
                 fh.seek(block * self.block_size)
 
-                for res in self._walk_large_tree(self._lblock_s(fh), leaf_size, magic):
-                    yield res
+                yield from self._walk_large_tree(self._lblock_s(fh), leaf_size, magic)
 
 
 class AllocationGroup:
-    def __init__(self, xfs, fh, num):
+    def __init__(self, xfs: XFS, fh: BinaryIO, num: int):
         self.xfs = xfs
         self.fh = fh
         self.num = num
@@ -191,8 +194,16 @@ class AllocationGroup:
         self._inum_mask = (1 << self._inum_bits) - 1
         self._inum_max = sb.sb_agblocks * sb.sb_inopblock
 
-    @lru_cache(1024)
-    def get_inode(self, inum, filename=None, filetype=None, parent=None, lazy=False):
+        self.get_inode = lru_cache(4096)(self.get_inode)
+
+    def get_inode(
+        self,
+        inum: int,
+        filename: Optional[str] = None,
+        filetype: Optional[int] = None,
+        parent: Optional[INode] = None,
+        lazy: bool = False,
+    ) -> INode:
         inode = INode(self, inum, filename, filetype, parent=parent)
 
         if not lazy:
@@ -200,25 +211,33 @@ class AllocationGroup:
 
         return inode
 
-    def walk_extents(self, fsb):
+    def walk_extents(self, fsb: int) -> Iterator[tuple[int, int, int, int]]:
         agnum, blknum = fsb_to_bb(fsb, self.sb.sb_agblklog)
         block = agnum * self.xfs.sb.sb_agblocks + blknum
-        for fs_block in self.xfs.walk_extents(block):
-            yield fs_block
+        yield from self.xfs.walk_extents(block)
 
-    def walk_agi(self):
-        for inobt_record in self.xfs.walk_agi(self.agi.agi_root, self.num):
-            yield inobt_record
+    def walk_agi(self) -> Iterator[Instance]:
+        yield from self.xfs.walk_agi(self.agi.agi_root, self.num)
 
-    def walk_tree(self, fsb, magic=None, small=False):
+    def walk_tree(self, fsb: int, magic: Optional[list[int]] = None, small: bool = False):
         agnum, blknum = fsb_to_bb(fsb, self.sb.sb_agblklog)
         block = agnum * self.xfs.sb.sb_agblocks + blknum
-        for record in self.xfs.walk_tree(block, magic, small):
-            yield record
+
+        if small:
+            yield from self.xfs.walk_small_tree(block, agnum, 16, magic)
+        else:
+            yield from self.xfs.walk_large_tree(block, 16, magic)
 
 
 class INode:
-    def __init__(self, ag, inum, filename=None, filetype=None, parent=None):
+    def __init__(
+        self,
+        ag: AllocationGroup,
+        inum: int,
+        filename: Optional[str] = None,
+        filetype: Optional[int] = None,
+        parent: Optional[INode] = None,
+    ):
         self.ag = ag
         self.xfs = ag.xfs
         self.inum = inum + (ag.num << ag._inum_bits)
@@ -235,10 +254,10 @@ class INode:
         self._dirlist = None
         self._runlist = None
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<inode {self.inum} ({self.ag.num}:{self.relative_inum})>"
 
-    def _read_inode(self):
+    def _read_inode(self) -> Instance:
         self.ag.fh.seek(self.relative_inum * self.ag.sb.sb_inodesize)
         self._buf = io.BytesIO(self.ag.fh.read(self.ag.sb.sb_inodesize))
         inode = c_xfs.xfs_dinode(self._buf)
@@ -249,23 +268,23 @@ class INode:
         return inode
 
     @property
-    def inode(self):
+    def inode(self) -> Instance:
         if not self._inode:
             self._inode = self._read_inode()
         return self._inode
 
     @property
-    def size(self):
+    def size(self) -> int:
         return self.inode.di_size
 
     @property
-    def filetype(self):
+    def filetype(self) -> int:
         if not self._filetype:
             self._filetype = stat.S_IFMT(self.inode.di_mode)
         return self._filetype
 
     @property
-    def link(self):
+    def link(self) -> str:
         if self.filetype != stat.S_IFLNK:
             raise NotASymlinkError(f"{self!r} is not a symlink")
 
@@ -283,7 +302,7 @@ class INode:
         return self._link
 
     @property
-    def link_inode(self):
+    def link_inode(self) -> INode:
         if not self._link_inode:
             # Relative lookups work because . and .. are actual directory entries
             link = self.link
@@ -299,38 +318,38 @@ class INode:
         return self._link_inode
 
     @property
-    def atime(self):
+    def atime(self) -> datetime:
         return ts.from_unix_ns(self.atime_ns)
 
     @property
-    def atime_ns(self):
+    def atime_ns(self) -> int:
         return (self.inode.di_atime.t_sec * 1000000000) + self.inode.di_atime.t_nsec
 
     @property
-    def mtime(self):
+    def mtime(self) -> datetime:
         return ts.from_unix_ns(self.mtime_ns)
 
     @property
-    def mtime_ns(self):
+    def mtime_ns(self) -> int:
         return (self.inode.di_mtime.t_sec * 1000000000) + self.inode.di_mtime.t_nsec
 
     @property
-    def ctime(self):
+    def ctime(self) -> datetime:
         return ts.from_unix_ns(self.ctime_ns)
 
     @property
-    def ctime_ns(self):
+    def ctime_ns(self) -> int:
         return (self.inode.di_ctime.t_sec * 1000000000) + self.inode.di_ctime.t_nsec
 
     @property
-    def crtime(self):
+    def crtime(self) -> datetime:
         return ts.from_unix_ns(self.crtime_ns)
 
     @property
-    def crtime_ns(self):
+    def crtime_ns(self) -> int:
         return (self.inode.di_crtime.t_sec * 1000000000) + self.inode.di_crtime.t_nsec
 
-    def listdir(self):
+    def listdir(self) -> dict[str, INode]:
         if self.filetype != stat.S_IFDIR:
             raise NotADirectoryError(f"{self!r} is not a directory")
 
@@ -435,13 +454,7 @@ class INode:
             else:
                 raise Error(f"{self!r} has invalid inode format for dirlist")
 
-            self._dirlist = dirs
-
-        return self._dirlist
-
-    dirlist = listdir
-
-    def datafork(self):
+    def datafork(self) -> BinaryIO:
         offset = 0xB0 if self.inode.di_version == 0x3 else 0x64
         if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL:
             size = self.size
@@ -452,7 +465,7 @@ class INode:
 
         return RangeStream(self._buf, offset, size)
 
-    def attrfork(self):
+    def attrfork(self) -> BinaryIO:
         if self.inode.di_forkoff == 0:
             raise Error(f"{self!r} has no extended attributes")
 
@@ -462,7 +475,7 @@ class INode:
 
         return RangeStream(self._buf, offset, size)
 
-    def dataruns(self):
+    def dataruns(self) -> list[tuple[Optional[int], int]]:
         if not self._runlist:
             runs = []
             run_offset = 0
@@ -509,7 +522,7 @@ class INode:
             self._runlist = runs
         return self._runlist
 
-    def open(self):
+    def open(self) -> BinaryIO:
         if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL:
             return self.datafork()
         elif self.inode.di_format in (
@@ -524,7 +537,7 @@ class INode:
             raise UnsupportedDataforkException(f"{self!r} is an unsupported datafork: {dinode_type}")
 
 
-def parse_fsblock(s):
+def parse_fsblock(s: bytes) -> tuple[int, int, int, int]:
     # MSB -> LSB
     # flag = 1 bit
     # offset = 54 bits
@@ -540,7 +553,7 @@ def parse_fsblock(s):
     return offset, block, count, flag
 
 
-def fsb_to_bb(block, agblklog):
+def fsb_to_bb(block: int, agblklog: int) -> tuple[int, int]:
     agnum = block >> agblklog
     blknum = block & ((1 << agblklog) - 1)
     return agnum, blknum
