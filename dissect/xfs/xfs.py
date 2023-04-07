@@ -63,15 +63,18 @@ class XFS:
         node = node if node else self.root
 
         parts = path.split("/")
-        for i, p in enumerate(parts):
-            if not p:
+        for part in parts:
+            if not part:
                 continue
 
-            while node.filetype == stat.S_IFLNK and i < len(parts):
+            while node.filetype == stat.S_IFLNK:
                 node = node.link_inode
 
-            dirlist = node.listdir()
-            if p not in dirlist:
+            for entry in node.iterdir():
+                if entry.filename == part:
+                    node = entry
+                    break
+            else:
                 raise FileNotFoundError(f"File not found: {path}")
 
         return node
@@ -370,109 +373,113 @@ class INode:
         return _parse_ts(self.inode.di_crtime, self._has_bigtime())
 
     def listdir(self) -> dict[str, INode]:
+        if not self._dirlist:
+            self._dirlist = {node.filename: node for node in self.iterdir()}
+        return self._dirlist
+
+    dirlist = listdir
+
+    def iterdir(self) -> Iterator[INode]:
         if self.filetype != stat.S_IFDIR:
             raise NotADirectoryError(f"{self!r} is not a directory")
 
-        if not self._dirlist:
-            dirs = {}
+        buf = self.open()
+        if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL:
+            header = c_xfs.xfs_dir2_sf_hdr(buf)
+            inum_s = c_xfs.uint64 if header.i8count else c_xfs.uint32
 
-            buf = self.open()
-            if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL:
-                header = c_xfs.xfs_dir2_sf_hdr(buf)
-                inum_s = c_xfs.uint64 if header.i8count else c_xfs.uint32
+            if header.i8count:
+                header.parent = (header.parent << 32) | c_xfs.uint32(buf)
 
-                if header.i8count:
-                    header.parent = (header.parent << 32) | c_xfs.uint32(buf)
+            yield self.xfs.get_inode(self.inum, filename=".")
+            yield self.xfs.get_inode(header.parent, filename="..")
 
-                dirs["."] = self
-                dirs[".."] = self.xfs.get_inode(header.parent)
+            for _ in range(header.count):
+                entry = c_xfs.xfs_dir2_sf_entry(buf)
+                fname = entry.name.decode(errors="surrogateescape")
+                ftype = c_xfs.uint8(buf) if self.xfs._has_ftype else 0
+                inum = inum_s(buf)
 
-                for _ in range(header.count):
-                    entry = c_xfs.xfs_dir2_sf_entry(buf)
-                    fname = entry.name.decode(errors="surrogateescape")
-                    ftype = c_xfs.uint8(buf) if self.xfs._has_ftype else 0
-                    inum = inum_s(buf)
+                ftype = FILETYPES[ftype]
 
-                    ftype = FILETYPES[ftype]
+                yield self.xfs.get_inode(inum, fname, ftype, parent=self, lazy=True)
+        elif self.inode.di_format in (
+            c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_EXTENTS,
+            c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_BTREE,
+        ):
+            for block_num in range(self.size // self.xfs.block_size):
+                buf.seek(block_num * self.xfs.block_size)
 
-                    dirs[fname] = self.xfs.get_inode(inum, fname, ftype, parent=self, lazy=True)
-            elif self.inode.di_format in (
-                c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_EXTENTS,
-                c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_BTREE,
-            ):
-                for block_num in range(self.size // self.xfs.block_size):
-                    buf.seek(block_num * self.xfs.block_size)
+                block_data = buf.read(self.xfs.block_size)
+                block = io.BytesIO(block_data)
 
-                    block_data = buf.read(self.xfs.block_size)
-                    block = io.BytesIO(block_data)
+                block.seek(-len(c_xfs.xfs_dir2_block_tail), io.SEEK_END)
+                tail = c_xfs.xfs_dir2_block_tail(block)
+                block.seek(0)
 
-                    block.seek(-len(c_xfs.xfs_dir2_block_tail), io.SEEK_END)
-                    tail = c_xfs.xfs_dir2_block_tail(block)
-                    block.seek(0)
+                if self.data_extents > 1:
+                    entries_end = self.xfs.block_size
+                else:
+                    entries_end = self.xfs.block_size
+                    entries_end -= len(c_xfs.xfs_dir2_block_tail)
+                    entries_end -= len(c_xfs.xfs_dir2_leaf_entry) * tail.count
 
-                    if self.data_extents > 1:
-                        entries_end = self.xfs.block_size
-                    else:
-                        entries_end = self.xfs.block_size
-                        entries_end -= len(c_xfs.xfs_dir2_block_tail)
-                        entries_end -= len(c_xfs.xfs_dir2_leaf_entry) * tail.count
+                if self.xfs.version == 5:
+                    header = c_xfs.xfs_dir3_data_hdr(block)
+                    if header.magic not in (c_xfs.XFS_DIR3_BLOCK_MAGIC, c_xfs.XFS_DIR3_DATA_MAGIC):
+                        # Probably a sparse block
+                        continue
+                else:
+                    header = c_xfs.xfs_dir2_data_hdr(block)
+                    if header.magic not in (c_xfs.XFS_DIR2_BLOCK_MAGIC, c_xfs.XFS_DIR2_DATA_MAGIC):
+                        # Probably a sparse block
+                        continue
 
-                    if self.xfs.version == 5:
-                        header = c_xfs.xfs_dir3_data_hdr(block)
-                        if header.magic not in (c_xfs.XFS_DIR3_BLOCK_MAGIC, c_xfs.XFS_DIR3_DATA_MAGIC):
-                            # Probably a sparse block
-                            continue
-                    else:
-                        header = c_xfs.xfs_dir2_data_hdr(block)
-                        if header.magic not in (c_xfs.XFS_DIR2_BLOCK_MAGIC, c_xfs.XFS_DIR2_DATA_MAGIC):
-                            # Probably a sparse block
-                            continue
+                if self.xfs._has_ftype:
+                    data_entry = c_xfs.xfs_dir2_data_entry_ftype
+                else:
+                    data_entry = c_xfs.xfs_dir2_data_entry
 
-                    if self.xfs._has_ftype:
-                        data_entry = c_xfs.xfs_dir2_data_entry_ftype
-                    else:
-                        data_entry = c_xfs.xfs_dir2_data_entry
+                while True:
+                    if block.tell() >= entries_end:
+                        break
 
-                    while True:
-                        if block.tell() >= entries_end:
-                            break
+                    try:
+                        if block_data[block.tell() : block.tell() + 2] == b"\xff\xff":
+                            unused = c_xfs.xfs_dir2_data_unused(block)
 
-                        try:
-                            if block_data[block.tell() : block.tell() + 2] == b"\xff\xff":
-                                unused = c_xfs.xfs_dir2_data_unused(block)
+                            block.read(unused.length - 6)
 
-                                block.read(unused.length - 6)
-
-                                misalign = block.tell() % 8
-                                if misalign:
-                                    block.seek(8 - misalign, io.SEEK_CUR)
-
-                                continue
-
-                            entry = data_entry(block)
-
-                            # Entries are 8 byte aligned
-                            # uint64 inum | uint8 namelen | variable name | uint8 ftype | uint16 tag
                             misalign = block.tell() % 8
                             if misalign:
                                 block.seek(8 - misalign, io.SEEK_CUR)
-                        except EOFError:
-                            break
 
-                        inum = entry.inumber
-                        if inum >> 48 == 0xFFFF:  # XFS_DIR2_DATA_FREE_TAG
-                            break
+                            continue
 
-                        if self.xfs._has_ftype:
-                            ftype = FILETYPES[entry.ftype]
-                        else:
-                            ftype = None
+                        entry = data_entry(block)
 
-                        fname = entry.name.decode(errors="surrogateescape")
+                        # Entries are 8 byte aligned
+                        # uint64 inum | uint8 namelen | variable name | uint8 ftype | uint16 tag
+                        misalign = block.tell() % 8
+                        if misalign:
+                            block.seek(8 - misalign, io.SEEK_CUR)
+                    except EOFError:
+                        break
 
-                        dirs[fname] = self.xfs.get_inode(inum, fname, ftype, parent=self, lazy=True)
-            else:
-                raise Error(f"{self!r} has invalid inode format for dirlist")
+                    inum = entry.inumber
+                    if inum >> 48 == 0xFFFF:  # XFS_DIR2_DATA_FREE_TAG
+                        break
+
+                    if self.xfs._has_ftype:
+                        ftype = FILETYPES[entry.ftype]
+                    else:
+                        ftype = None
+
+                    fname = entry.name.decode(errors="surrogateescape")
+
+                    yield self.xfs.get_inode(inum, fname, ftype, parent=self, lazy=True)
+        else:
+            raise Error(f"{self!r} has invalid inode format for dirlist")
 
     def datafork(self) -> BinaryIO:
         offset = 0xB0 if self.inode.di_version == 0x3 else 0x64
