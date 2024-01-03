@@ -608,16 +608,16 @@ struct xfs_btree_lblock {
     uint32_t        bb_magic;                           /* magic number for block type */
     uint16_t        bb_level;                           /* 0 is a leaf */
     uint16_t        bb_numrecs;                         /* current # of data records */
-    uint32_t        bb_leftsib;
-    uint32_t        bb_rightsib;
+    uint64_t        bb_leftsib;
+    uint64_t        bb_rightsib;
 };
 
 struct xfs_btree_lblock_crc {
     uint32_t        bb_magic;                           /* magic number for block type */
     uint16_t        bb_level;                           /* 0 is a leaf */
     uint16_t        bb_numrecs;                         /* current # of data records */
-    uint32_t        bb_leftsib;
-    uint32_t        bb_rightsib;
+    uint64_t        bb_leftsib;
+    uint64_t        bb_rightsib;
     uint64_t        bb_blkno;
     uint64_t        bb_lsn;
     char            bb_uuid[16];
