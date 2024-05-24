@@ -1,6 +1,6 @@
 import stat
 
-from dissect import cstruct
+from dissect.cstruct import cstruct
 
 xfs_def = """
 typedef uint64 xfs_ino_t;                               /* <inode> type */
@@ -888,8 +888,7 @@ typedef struct xfs_dir2_block_tail {
 } xfs_dir2_block_tail_t;
 """
 
-c_xfs = cstruct.cstruct(endian=">")
-c_xfs.load(xfs_def)
+c_xfs = cstruct(endian=">").load(xfs_def)
 
 FILETYPES = {
     0x0: None,
