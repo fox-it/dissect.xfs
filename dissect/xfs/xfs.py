@@ -9,7 +9,6 @@ from functools import lru_cache
 from typing import BinaryIO, Iterator, Optional, Union
 from uuid import UUID
 
-from dissect.cstruct import Instance
 from dissect.util import ts
 from dissect.util.stream import RangeStream, RunlistStream
 
@@ -95,7 +94,7 @@ class XFS:
 
         return self.get_allocation_group(agnum).get_inode(inum, *args, **kwargs)
 
-    def walk_agi(self, block: int, agnum: int) -> Iterator[Instance]:
+    def walk_agi(self, block: int, agnum: int) -> Iterator[c_xfs.xfs_inobt_rec]:
         for record in self.walk_small_tree(block, agnum, 16, (c_xfs.XFS_IBT_MAGIC, c_xfs.XFS_IBT_CRC_MAGIC)):
             yield c_xfs.xfs_inobt_rec(record)
 
@@ -119,7 +118,11 @@ class XFS:
         yield from self._walk_small_tree(root, leaf_size, agnum, magic)
 
     def _walk_small_tree(
-        self, node: Instance, leaf_size: int, agnum: int, magic: Optional[list[int]] = None
+        self,
+        node: c_xfs.xfs_btree_sblock | c_xfs.xfs_btree_sblock_crc,
+        leaf_size: int,
+        agnum: int,
+        magic: Optional[list[int]] = None,
     ) -> Iterator[bytes]:
         fh = self.fh
         if magic and node.bb_magic not in magic:
@@ -141,7 +144,12 @@ class XFS:
 
                 yield from self._walk_small_tree(self._sblock_s(fh), leaf_size, agnum, magic)
 
-    def _walk_large_tree(self, node: Instance, leaf_size: int, magic: Optional[list[int]] = None) -> Iterator[bytes]:
+    def _walk_large_tree(
+        self,
+        node: c_xfs.xfs_btree_lblock | c_xfs.xfs_btree_lblock_crc,
+        leaf_size: int,
+        magic: Optional[list[int]] = None,
+    ) -> Iterator[bytes]:
         fh = self.fh
         if magic and node.bb_magic not in magic:
             magic_values = ", ".join([f"0x{magic_value:x}" for magic_value in magic])
@@ -219,7 +227,7 @@ class AllocationGroup:
         block = agnum * self.xfs.sb.sb_agblocks + blknum
         yield from self.xfs.walk_extents(block)
 
-    def walk_agi(self) -> Iterator[Instance]:
+    def walk_agi(self) -> Iterator[c_xfs.xfs_inobt_rec]:
         yield from self.xfs.walk_agi(self.agi.agi_root, self.num)
 
     def walk_tree(self, fsb: int, magic: Optional[list[int]] = None, small: bool = False):
@@ -260,7 +268,7 @@ class INode:
     def __repr__(self) -> str:
         return f"<inode {self.inum} ({self.ag.num}:{self.relative_inum})>"
 
-    def _read_inode(self) -> Instance:
+    def _read_inode(self) -> c_xfs.xfs_dinode:
         self.ag.fh.seek(self.relative_inum * self.ag.sb.sb_inodesize)
         self._buf = io.BytesIO(self.ag.fh.read(self.ag.sb.sb_inodesize))
         inode = c_xfs.xfs_dinode(self._buf)
@@ -271,7 +279,7 @@ class INode:
         return inode
 
     @property
-    def inode(self) -> Instance:
+    def inode(self) -> c_xfs.xfs_dinode:
         if not self._inode:
             self._inode = self._read_inode()
         return self._inode
