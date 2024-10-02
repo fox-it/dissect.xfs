@@ -11,6 +11,7 @@ def test_xfs(xfs_bin):
     xfs = XFS(xfs_bin)
 
     assert xfs.version == 5
+    assert xfs.block_size == 4096
     assert str(xfs.uuid) == "3fb8342e-e144-4f0c-8bd7-725e78966200"
     assert str(xfs.meta_uuid) == "00000000-0000-0000-0000-000000000000"
 
@@ -22,6 +23,7 @@ def test_xfs(xfs_bin):
     assert list(root.listdir().keys()) == [".", "..", "test_file", "test_dir", "test_link"]
 
     test_file = xfs.get("test_file")
+    assert test_file.number_of_blocks == 1
     assert test_file.open().read() == b"test content\n"
 
     test_link = xfs.get("test_link")
