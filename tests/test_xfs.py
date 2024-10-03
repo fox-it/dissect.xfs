@@ -27,6 +27,7 @@ def test_xfs(xfs_bin):
     assert test_file.open().read() == b"test content\n"
 
     test_link = xfs.get("test_link")
+    assert test_link.number_of_blocks == 0
     assert test_link.filetype == stat.S_IFLNK
     assert test_link.link == "test_dir/test_file"
 
@@ -36,18 +37,22 @@ def test_xfs_sparse(xfs_sparse_bin):
 
     sparse_start = xfs.get("sparse_start")
     assert sparse_start.size == 0x258000
+    assert sparse_start.number_of_blocks == 200
     assert sparse_start.dataruns() == [(None, 400), (1392, 200)]
 
     sparse_hole = xfs.get("sparse_hole")
     assert sparse_hole.size == 0x258000
+    assert sparse_hole.number_of_blocks == 400
     assert sparse_hole.dataruns() == [(1792, 200), (None, 200), (2192, 200)]
 
     sparse_end = xfs.get("sparse_end")
     assert sparse_end.size == 0x190000
+    assert sparse_end.number_of_blocks == 200
     assert sparse_end.dataruns() == [(2392, 200), (None, 200)]
 
     sparse_all = xfs.get("sparse_all")
     assert sparse_all.size == 0x500000
+    assert sparse_all.number_of_blocks == 0
     assert sparse_all.dataruns() == [(None, 1280)]
 
 
