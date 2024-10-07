@@ -295,6 +295,10 @@ class INode:
         return self.inode.di_size
 
     @property
+    def nblocks(self) -> int:
+        return self.inode.di_nblocks
+
+    @property
     def data_extents(self) -> int:
         if self._has_large_extent_counts():
             return self.inode.di_big_nextents
