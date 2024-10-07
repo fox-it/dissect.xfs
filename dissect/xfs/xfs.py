@@ -295,7 +295,7 @@ class INode:
         return self.inode.di_size
 
     @property
-    def number_of_blocks(self) -> int:
+    def nblocks(self) -> int:
         return self.inode.di_nblocks
 
     @property
