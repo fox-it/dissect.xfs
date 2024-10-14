@@ -6,7 +6,7 @@ import os
 import stat
 from datetime import datetime
 from functools import lru_cache
-from typing import BinaryIO, Iterator, Optional, Union
+from typing import BinaryIO, Iterator
 from uuid import UUID
 
 from dissect.util import ts
@@ -55,7 +55,7 @@ class XFS:
 
         self.root = self.get_inode(self.sb.sb_rootino)
 
-    def get(self, path: Union[int, str], node: Optional[INode] = None) -> INode:
+    def get(self, path: int | str, node: INode | None = None) -> INode:
         if isinstance(path, int):
             return self.get_inode(path)
 
@@ -102,14 +102,14 @@ class XFS:
         for record in self.walk_large_tree(block, 16, (c_xfs.XFS_BMAP_MAGIC, c_xfs.XFS_BMAP_CRC_MAGIC)):
             yield parse_fsblock(record)
 
-    def walk_large_tree(self, block: int, leaf_size: int, magic: Optional[list[int]] = None) -> Iterator[bytes]:
+    def walk_large_tree(self, block: int, leaf_size: int, magic: list[int] | None = None) -> Iterator[bytes]:
         self.fh.seek(block * self.block_size)
         root = self._lblock_s(self.fh)
 
         yield from self._walk_large_tree(root, leaf_size, magic)
 
     def walk_small_tree(
-        self, block: int, agnum: int, leaf_size: int, magic: Optional[list[int]] = None
+        self, block: int, agnum: int, leaf_size: int, magic: list[int] | None = None
     ) -> Iterator[bytes]:
         block = agnum * self.sb.sb_agblocks + block
         self.fh.seek(block * self.block_size)
@@ -122,7 +122,7 @@ class XFS:
         node: c_xfs.xfs_btree_sblock | c_xfs.xfs_btree_sblock_crc,
         leaf_size: int,
         agnum: int,
-        magic: Optional[list[int]] = None,
+        magic: list[int] | None = None,
     ) -> Iterator[bytes]:
         fh = self.fh
         if magic and node.bb_magic not in magic:
@@ -148,7 +148,7 @@ class XFS:
         self,
         node: c_xfs.xfs_btree_lblock | c_xfs.xfs_btree_lblock_crc,
         leaf_size: int,
-        magic: Optional[list[int]] = None,
+        magic: list[int] | None = None,
     ) -> Iterator[bytes]:
         fh = self.fh
         if magic and node.bb_magic not in magic:
@@ -210,9 +210,9 @@ class AllocationGroup:
     def get_inode(
         self,
         inum: int,
-        filename: Optional[str] = None,
-        filetype: Optional[int] = None,
-        parent: Optional[INode] = None,
+        filename: str | None = None,
+        filetype: int | None = None,
+        parent: INode | None = None,
         lazy: bool = False,
     ) -> INode:
         inode = INode(self, inum, filename, filetype, parent=parent)
@@ -230,7 +230,7 @@ class AllocationGroup:
     def walk_agi(self) -> Iterator[c_xfs.xfs_inobt_rec]:
         yield from self.xfs.walk_agi(self.agi.agi_root, self.num)
 
-    def walk_tree(self, fsb: int, magic: Optional[list[int]] = None, small: bool = False):
+    def walk_tree(self, fsb: int, magic: list[int] | None = None, small: bool = False):
         agnum, blknum = fsb_to_bb(fsb, self.sb.sb_agblklog)
         block = agnum * self.xfs.sb.sb_agblocks + blknum
 
@@ -245,9 +245,9 @@ class INode:
         self,
         ag: AllocationGroup,
         inum: int,
-        filename: Optional[str] = None,
-        filetype: Optional[int] = None,
-        parent: Optional[INode] = None,
+        filename: str | None = None,
+        filetype: int | None = None,
+        parent: INode | None = None,
     ):
         self.ag = ag
         self.xfs = ag.xfs
@@ -517,7 +517,7 @@ class INode:
 
         return RangeStream(self._buf, offset, size)
 
-    def dataruns(self) -> list[tuple[Optional[int], int]]:
+    def dataruns(self) -> list[tuple[int | None, int]]:
         if not self._runlist:
             runs = []
             run_offset = 0
