@@ -73,6 +73,7 @@ def test_xfs_bigtime(xfs_bigtime_bin):
         ("tests/data/xfs_symlink_test1.bin.gz"),
         ("tests/data/xfs_symlink_test2.bin.gz"),
         ("tests/data/xfs_symlink_test3.bin.gz"),
+        ("tests/data/xfs_symlink_long.bin.gz"),
     ],
 )
 def test_symlinks(image_file):
@@ -85,4 +86,6 @@ def test_symlinks(image_file):
         return node
 
     with gzip.open(image_file, "rb") as disk:
-        assert resolve(XFS(disk).get(path)).open().read() == expect
+        link_inode = resolve(XFS(disk).get(path))
+        assert link_inode.nblocks == 1
+        assert link_inode.open().read() == expect

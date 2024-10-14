@@ -325,7 +325,10 @@ class INode:
 
         if not self._link:
             if self.inode.di_format != c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL and self.xfs.version == 5:
-                fh = self.open()
+                # We do not use open because for non-resident symlinks self.size does not include the symlink header
+                runs = self.dataruns()
+                symlink_size = c_xfs.xfs_dsymlink_hdr.size + self.size
+                fh = RunlistStream(self.xfs.fh, runs, symlink_size, self.xfs.block_size)
 
                 header = c_xfs.xfs_dsymlink_hdr(fh)
                 if header.sl_magic != c_xfs.XFS_SYMLINK_MAGIC:
