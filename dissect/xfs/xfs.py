@@ -230,7 +230,7 @@ class AllocationGroup:
     def walk_agi(self) -> Iterator[c_xfs.xfs_inobt_rec]:
         yield from self.xfs.walk_agi(self.agi.agi_root, self.num)
 
-    def walk_tree(self, fsb: int, magic: list[int] | None = None, small: bool = False):
+    def walk_tree(self, fsb: int, magic: list[int] | None = None, small: bool = False) -> Iterator[bytes]:
         agnum, blknum = fsb_to_bb(fsb, self.sb.sb_agblklog)
         block = agnum * self.xfs.sb.sb_agblocks + blknum
 
@@ -248,7 +248,7 @@ class INode:
         filename: str | None = None,
         filetype: int | None = None,
         parent: INode | None = None,
-    ):
+    ) -> None:
         self.ag = ag
         self.xfs = ag.xfs
         self.inum = inum + (ag.num << ag._inum_bits)
@@ -325,10 +325,16 @@ class INode:
 
         if not self._link:
             if self.inode.di_format != c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL and self.xfs.version == 5:
+                # Almost always, symlinks (max size of 1024) fit within a block. If the block size if 512, we might
+                # need three blocks. These three blocks could theoretially be distributed over multiple extents.
+                # Linux kernel handles this by using sl_offset to piece the symlink back together.
+                # As this edge case of an edge case is very unlikely, it is unsupported until we observe it.
+                if len(self.dataruns()) > 1:
+                    raise NotImplementedError(f"{self!r} has a symlink distributed over multiple extents")
+
                 # We do not use open because for non-resident symlinks self.size does not include the symlink header
-                runs = self.dataruns()
-                symlink_size = c_xfs.xfs_dsymlink_hdr.size + self.size
-                fh = RunlistStream(self.xfs.fh, runs, symlink_size, self.xfs.block_size)
+                symlink_size = len(c_xfs.xfs_dsymlink_hdr) + self.size
+                fh = RunlistStream(self.xfs.fh, self.dataruns(), symlink_size, self.xfs.block_size)
 
                 header = c_xfs.xfs_dsymlink_hdr(fh)
                 if header.sl_magic != c_xfs.XFS_SYMLINK_MAGIC:
