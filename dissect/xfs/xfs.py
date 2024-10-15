@@ -329,6 +329,7 @@ class INode:
                 # need three blocks. These three blocks could theoretially be distributed over multiple extents.
                 # Linux kernel handles this by using sl_offset to piece the symlink back together.
                 # As this edge case of an edge case is very unlikely, it is unsupported until we observe it.
+                # Ticket: https://github.com/fox-it/dissect.xfs/issues/36
                 if len(self.dataruns()) > 1:
                     raise NotImplementedError(f"{self!r} has a symlink distributed over multiple extents")
 
