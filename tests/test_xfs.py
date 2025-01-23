@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 import datetime
 import gzip
 import stat
+from typing import BinaryIO
 
 import pytest
 
-from dissect.xfs.xfs import XFS
+from dissect.xfs.xfs import XFS, INode
 
 
-def test_xfs(xfs_bin):
+def test_xfs(xfs_bin: BinaryIO) -> None:
     xfs = XFS(xfs_bin)
 
     assert xfs.version == 5
@@ -32,7 +35,7 @@ def test_xfs(xfs_bin):
     assert test_link.link == "test_dir/test_file"
 
 
-def test_xfs_sparse(xfs_sparse_bin):
+def test_xfs_sparse(xfs_sparse_bin: BinaryIO) -> None:
     xfs = XFS(xfs_sparse_bin)
 
     sparse_start = xfs.get("sparse_start")
@@ -56,7 +59,7 @@ def test_xfs_sparse(xfs_sparse_bin):
     assert sparse_all.dataruns() == [(None, 1280)]
 
 
-def test_xfs_bigtime(xfs_bigtime_bin):
+def test_xfs_bigtime(xfs_bigtime_bin: BinaryIO) -> None:
     xfs = XFS(xfs_bigtime_bin)
 
     assert xfs.version == 5
@@ -76,11 +79,11 @@ def test_xfs_bigtime(xfs_bigtime_bin):
         ("tests/data/xfs_symlink_long.bin.gz"),
     ],
 )
-def test_symlinks(image_file):
+def test_symlinks(image_file: str) -> None:
     path = "/path/to/dir/with/file.ext"
     expect = b"resolved!\n"
 
-    def resolve(node):
+    def resolve(node: INode) -> INode:
         while node.filetype == stat.S_IFLNK:
             node = node.link_inode
         return node

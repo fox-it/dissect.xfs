@@ -4,9 +4,8 @@ import io
 import logging
 import os
 import stat
-from datetime import datetime
 from functools import lru_cache
-from typing import BinaryIO, Iterator
+from typing import TYPE_CHECKING, BinaryIO
 from uuid import UUID
 
 from dissect.util import ts
@@ -21,6 +20,10 @@ from dissect.xfs.exceptions import (
     SymlinkUnavailableException,
     UnsupportedDataforkException,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from datetime import datetime
 
 log = logging.getLogger(__name__)
 log.setLevel(os.getenv("DISSECT_LOG_XFS", "CRITICAL"))
@@ -89,7 +92,7 @@ class XFS:
     def get_relative_inode(self, agnum: int, inum: int, *args, **kwargs) -> INode:
         if agnum >= self.sb.sb_agcount:
             raise Error(f"Allocation group num exceeds number of allocation groups: {agnum} >= {self.sb.sb_agcount}")
-        elif inum >= self._inum_max:
+        if inum >= self._inum_max:
             raise Error(f"inode number exceeds number of inodes per allocation group: {inum} >= {self._inum_max}")
 
         return self.get_allocation_group(agnum).get_inode(inum, *args, **kwargs)
@@ -457,10 +460,7 @@ class INode:
                         # Probably a sparse block
                         continue
 
-                if self.xfs._has_ftype:
-                    data_entry = c_xfs.xfs_dir2_data_entry_ftype
-                else:
-                    data_entry = c_xfs.xfs_dir2_data_entry
+                data_entry = c_xfs.xfs_dir2_data_entry_ftype if self.xfs._has_ftype else c_xfs.xfs_dir2_data_entry
 
                 while True:
                     if block.tell() >= entries_end:
@@ -492,10 +492,7 @@ class INode:
                     if inum >> 48 == 0xFFFF:  # XFS_DIR2_DATA_FREE_TAG
                         break
 
-                    if self.xfs._has_ftype:
-                        ftype = FILETYPES[entry.ftype]
-                    else:
-                        ftype = None
+                    ftype = FILETYPES[entry.ftype] if self.xfs._has_ftype else None
 
                     fname = entry.name.decode(errors="surrogateescape")
 
@@ -570,16 +567,15 @@ class INode:
     def open(self) -> BinaryIO:
         if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL:
             return self.datafork()
-        elif self.inode.di_format in (
+        if self.inode.di_format in (
             c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_EXTENTS,
             c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_BTREE,
         ):
             return RunlistStream(self.xfs.fh, self.dataruns(), self.size, self.xfs.block_size)
-        elif self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_DEV:
+        if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_DEV:
             raise UnsupportedDataforkException(f"{self!r} is a character/block device.")
-        else:
-            dinode_type = c_xfs.xfs_dinode_fmt(self.inode.di_format)
-            raise UnsupportedDataforkException(f"{self!r} is an unsupported datafork: {dinode_type}")
+        dinode_type = c_xfs.xfs_dinode_fmt(self.inode.di_format)
+        raise UnsupportedDataforkException(f"{self!r} is an unsupported datafork: {dinode_type}")
 
 
 def parse_fsblock(s: bytes) -> tuple[int, int, int, int]:
