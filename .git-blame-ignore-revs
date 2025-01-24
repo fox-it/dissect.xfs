@@ -1,0 +1,6 @@
+# Formatting commits. You can ignore them during git-blame with `--ignore-rev` or `--ignore-revs-file`.
+#
+#   $ git config --add 'blame.ignoreRevsFile' '.git-blame-ignore-revs'
+#
+# Change linter to Ruff (#40)
+25b67819a0dc443ec4942a10ea2938c5a641f4c8
