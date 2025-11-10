@@ -4,7 +4,6 @@ import io
 import logging
 import os
 import stat
-from functools import lru_cache
 from typing import TYPE_CHECKING, BinaryIO
 from uuid import UUID
 
@@ -17,7 +16,6 @@ from dissect.xfs.exceptions import (
     FileNotFoundError,
     NotADirectoryError,
     NotASymlinkError,
-    SymlinkUnavailableException,
     UnsupportedDataforkException,
 )
 
@@ -68,9 +66,6 @@ class XFS:
         for part in parts:
             if not part:
                 continue
-
-            while node.filetype == stat.S_IFLNK:
-                node = node.link_inode
 
             for entry in node.iterdir():
                 if entry.filename == part:
@@ -208,22 +203,13 @@ class AllocationGroup:
         self._inum_mask = (1 << self._inum_bits) - 1
         self._inum_max = sb.sb_agblocks * sb.sb_inopblock
 
-        self.get_inode = lru_cache(4096)(self.get_inode)
-
     def get_inode(
         self,
         inum: int,
         filename: str | None = None,
         filetype: int | None = None,
-        parent: INode | None = None,
-        lazy: bool = False,
     ) -> INode:
-        inode = INode(self, inum, filename, filetype, parent=parent)
-
-        if not lazy:
-            inode._inode = inode._read_inode()
-
-        return inode
+        return INode(self, inum, filename, filetype)
 
     def walk_extents(self, fsb: int) -> Iterator[tuple[int, int, int, int]]:
         agnum, blknum = fsb_to_bb(fsb, self.sb.sb_agblklog)
@@ -250,22 +236,18 @@ class INode:
         inum: int,
         filename: str | None = None,
         filetype: int | None = None,
-        parent: INode | None = None,
     ) -> None:
         self.ag = ag
         self.xfs = ag.xfs
         self.inum = inum + (ag.num << ag._inum_bits)
         self.relative_inum = inum
-        self.parent = parent
         self._inode = None
         self._buf = None
 
         self.filename = filename
         self._filetype = filetype
         self._link = None
-        self._link_inode = None
 
-        self._dirlist = None
         self._runlist = None
 
     def __repr__(self) -> str:
@@ -350,22 +332,6 @@ class INode:
         return self._link
 
     @property
-    def link_inode(self) -> INode:
-        if not self._link_inode:
-            # Relative lookups work because . and .. are actual directory entries
-            link = self.link
-            if link.startswith("/"):
-                relnode = None
-            elif link.startswith("../"):
-                relnode = self.parent
-                if relnode is None:
-                    raise SymlinkUnavailableException(f"{self!r} is a symlink to another filesystem")
-            else:
-                relnode = self.parent
-            self._link_inode = self.xfs.get(self.link, relnode)
-        return self._link_inode
-
-    @property
     def atime(self) -> datetime:
         return ts.from_unix_ns(self.atime_ns)
 
@@ -398,9 +364,7 @@ class INode:
         return _parse_ts(self.inode.di_crtime, self._has_bigtime())
 
     def listdir(self) -> dict[str, INode]:
-        if not self._dirlist:
-            self._dirlist = {node.filename: node for node in self.iterdir()}
-        return self._dirlist
+        return {node.filename: node for node in self.iterdir()}
 
     dirlist = listdir
 
@@ -427,7 +391,7 @@ class INode:
 
                 ftype = FILETYPES[ftype]
 
-                yield self.xfs.get_inode(inum, fname, ftype, parent=self, lazy=True)
+                yield self.xfs.get_inode(inum, fname, ftype)
         elif self.inode.di_format in (
             c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_EXTENTS,
             c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_BTREE,
@@ -496,7 +460,7 @@ class INode:
 
                     fname = entry.name.decode(errors="surrogateescape")
 
-                    yield self.xfs.get_inode(inum, fname, ftype, parent=self, lazy=True)
+                    yield self.xfs.get_inode(inum, fname, ftype)
         else:
             raise Error(f"{self!r} has invalid inode format for dirlist")
 

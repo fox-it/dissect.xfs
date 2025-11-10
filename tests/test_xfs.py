@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import datetime
-import gzip
 import stat
 from typing import BinaryIO
 
-import pytest
-
-from dissect.xfs.xfs import XFS, INode
+from dissect.xfs.xfs import XFS
 
 
 def test_xfs(xfs_bin: BinaryIO) -> None:
@@ -70,25 +67,8 @@ def test_xfs_bigtime(xfs_bigtime_bin: BinaryIO) -> None:
     assert test_file.crtime_ns == 1680858909223364005
 
 
-@pytest.mark.parametrize(
-    "image_file",
-    [
-        ("tests/data/xfs_symlink_test1.bin.gz"),
-        ("tests/data/xfs_symlink_test2.bin.gz"),
-        ("tests/data/xfs_symlink_test3.bin.gz"),
-        ("tests/data/xfs_symlink_long.bin.gz"),
-    ],
-)
-def test_symlinks(image_file: str) -> None:
+def test_symlinks(xfs_symlink_bin: BinaryIO) -> None:
     path = "/path/to/dir/with/file.ext"
-    expect = b"resolved!\n"
 
-    def resolve(node: INode) -> INode:
-        while node.filetype == stat.S_IFLNK:
-            node = node.link_inode
-        return node
-
-    with gzip.open(image_file, "rb") as disk:
-        link_inode = resolve(XFS(disk).get(path))
-        assert link_inode.nblocks == 1
-        assert link_inode.open().read() == expect
+    xfs = XFS(xfs_symlink_bin)
+    assert xfs.get(path).link == "../../../../other/path/source/to/my/file.ext"
