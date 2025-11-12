@@ -21,19 +21,19 @@ def gzip_file(filename: str) -> Iterator[BinaryIO]:
 
 @pytest.fixture
 def xfs_bin() -> Iterator[BinaryIO]:
-    yield from gzip_file("data/xfs.bin.gz")
+    yield from gzip_file("_data/xfs.bin.gz")
 
 
 @pytest.fixture
 def xfs_sparse_bin() -> Iterator[BinaryIO]:
-    yield from gzip_file("data/xfs_sparse.bin.gz")
+    yield from gzip_file("_data/xfs_sparse.bin.gz")
 
 
 @pytest.fixture
 def xfs_bigtime_bin() -> Iterator[BinaryIO]:
-    yield from gzip_file("data/xfs_bigtime.bin.gz")
+    yield from gzip_file("_data/xfs_bigtime.bin.gz")
 
 
 @pytest.fixture
 def xfs_symlink_bin() -> Iterator[BinaryIO]:
-    yield from gzip_file("data/xfs_symlink_test.bin.gz")
+    yield from gzip_file("_data/xfs_symlink_test.bin.gz")
