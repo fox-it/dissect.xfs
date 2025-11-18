@@ -4,6 +4,7 @@ import io
 import logging
 import os
 import stat
+from functools import cached_property
 from typing import TYPE_CHECKING, BinaryIO
 from uuid import UUID
 
@@ -241,19 +242,16 @@ class INode:
         self.xfs = ag.xfs
         self.inum = inum + (ag.num << ag._inum_bits)
         self.relative_inum = inum
-        self._inode = None
         self._buf = None
 
         self.filename = filename
         self._filetype = filetype
-        self._link = None
-
-        self._runlist = None
 
     def __repr__(self) -> str:
         return f"<inode {self.inum} ({self.ag.num}:{self.relative_inum})>"
 
-    def _read_inode(self) -> c_xfs.xfs_dinode:
+    @cached_property
+    def inode(self) -> c_xfs.xfs_dinode:
         self.ag.fh.seek(self.relative_inum * self.ag.sb.sb_inodesize)
         self._buf = io.BytesIO(self.ag.fh.read(self.ag.sb.sb_inodesize))
         inode = c_xfs.xfs_dinode(self._buf)
@@ -262,12 +260,6 @@ class INode:
             raise Error(f"{self!r} has invalid inode magic")
 
         return inode
-
-    @property
-    def inode(self) -> c_xfs.xfs_dinode:
-        if not self._inode:
-            self._inode = self._read_inode()
-        return self._inode
 
     def _has_bigtime(self) -> bool:
         return self.inode.di_version >= 3 and self.inode.di_flags2 & c_xfs.XFS_DIFLAG2_BIGTIME != 0
@@ -303,33 +295,31 @@ class INode:
             self._filetype = stat.S_IFMT(self.inode.di_mode)
         return self._filetype
 
-    @property
+    @cached_property
     def link(self) -> str:
         if self.filetype != stat.S_IFLNK:
             raise NotASymlinkError(f"{self!r} is not a symlink")
 
-        if not self._link:
-            if self.inode.di_format != c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL and self.xfs.version == 5:
-                # Almost always, symlinks (max size of 1024) fit within a block. If the block size if 512, we might
-                # need three blocks. These three blocks could theoretially be distributed over multiple extents.
-                # Linux kernel handles this by using sl_offset to piece the symlink back together.
-                # As this edge case of an edge case is very unlikely, it is unsupported until we observe it.
-                # Ticket: https://github.com/fox-it/dissect.xfs/issues/36
-                if len(self.dataruns()) > 1:
-                    raise NotImplementedError(f"{self!r} has a symlink distributed over multiple extents")
+        if self.inode.di_format != c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_LOCAL and self.xfs.version == 5:
+            # Almost always, symlinks (max size of 1024) fit within a block. If the block size if 512, we might
+            # need three blocks. These three blocks could theoretially be distributed over multiple extents.
+            # Linux kernel handles this by using sl_offset to piece the symlink back together.
+            # As this edge case of an edge case is very unlikely, it is unsupported until we observe it.
+            # Ticket: https://github.com/fox-it/dissect.xfs/issues/36
+            if len(self.dataruns) > 1:
+                raise NotImplementedError(f"{self!r} has a symlink distributed over multiple extents")
 
-                # We do not use open because for non-resident symlinks self.size does not include the symlink header
-                symlink_size = len(c_xfs.xfs_dsymlink_hdr) + self.size
-                fh = RunlistStream(self.xfs.fh, self.dataruns(), symlink_size, self.xfs.block_size)
+            # We do not use open because for non-resident symlinks self.size does not include the symlink header
+            symlink_size = len(c_xfs.xfs_dsymlink_hdr) + self.size
+            fh = RunlistStream(self.xfs.fh, self.dataruns, symlink_size, self.xfs.block_size)
 
-                header = c_xfs.xfs_dsymlink_hdr(fh)
-                if header.sl_magic != c_xfs.XFS_SYMLINK_MAGIC:
-                    raise NotASymlinkError(f"{self!r} has invalid symlink magic")
+            header = c_xfs.xfs_dsymlink_hdr(fh)
+            if header.sl_magic != c_xfs.XFS_SYMLINK_MAGIC:
+                raise NotASymlinkError(f"{self!r} has invalid symlink magic")
 
-                self._link = fh.read(header.sl_bytes).decode(errors="surrogateescape")
-            else:
-                self._link = self.open().read().decode(errors="surrogateescape")
-        return self._link
+            return fh.read(header.sl_bytes).decode(errors="surrogateescape")
+
+        return self.open().read().decode(errors="surrogateescape")
 
     @property
     def atime(self) -> datetime:
@@ -485,30 +475,29 @@ class INode:
 
         return RangeStream(self._buf, offset, size)
 
+    @cached_property
     def dataruns(self) -> list[tuple[int | None, int]]:
-        if not self._runlist:
-            runs = []
-            run_offset = 0
-            expected_runs = (self.size + self.xfs.block_size - 1) // self.xfs.block_size
+        runs = []
+        run_offset = 0
+        expected_runs = (self.size + self.xfs.block_size - 1) // self.xfs.block_size
 
-            for offset, block, count, _ in self._iter_blocks():
-                if offset != run_offset:
-                    gap = offset - run_offset
-                    runs.append((None, gap))
-                    run_offset += gap
+        for offset, block, count, _ in self._iter_blocks():
+            if offset != run_offset:
+                gap = offset - run_offset
+                runs.append((None, gap))
+                run_offset += gap
 
-                # Convert filesystem blocks to logical blocks
-                agnum, blknum = fsb_to_bb(block, self.ag.sb.sb_agblklog)
-                block = agnum * self.xfs.sb.sb_agblocks + blknum
+            # Convert filesystem blocks to logical blocks
+            agnum, blknum = fsb_to_bb(block, self.ag.sb.sb_agblklog)
+            block = agnum * self.xfs.sb.sb_agblocks + blknum
 
-                runs.append((block, count))
-                run_offset += count
+            runs.append((block, count))
+            run_offset += count
 
-            if run_offset < expected_runs:
-                runs.append((None, expected_runs - run_offset))
+        if run_offset < expected_runs:
+            runs.append((None, expected_runs - run_offset))
 
-            self._runlist = runs
-        return self._runlist
+        return runs
 
     def _iter_blocks(self) -> Iterator[tuple[int, int, int, int]]:
         if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_EXTENTS:
@@ -535,7 +524,7 @@ class INode:
             c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_EXTENTS,
             c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_BTREE,
         ):
-            return RunlistStream(self.xfs.fh, self.dataruns(), self.size, self.xfs.block_size)
+            return RunlistStream(self.xfs.fh, self.dataruns, self.size, self.xfs.block_size)
         if self.inode.di_format == c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_DEV:
             raise UnsupportedDataforkException(f"{self!r} is a character/block device.")
         dinode_type = c_xfs.xfs_dinode_fmt(self.inode.di_format)
