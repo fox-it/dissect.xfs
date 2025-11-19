@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import datetime
-import gzip
 import stat
 from typing import BinaryIO
 
-import pytest
-
-from dissect.xfs.xfs import XFS, INode
+from dissect.xfs.xfs import XFS
 
 
 def test_xfs(xfs_bin: BinaryIO) -> None:
@@ -41,22 +38,22 @@ def test_xfs_sparse(xfs_sparse_bin: BinaryIO) -> None:
     sparse_start = xfs.get("sparse_start")
     assert sparse_start.size == 0x258000
     assert sparse_start.nblocks == 200
-    assert sparse_start.dataruns() == [(None, 400), (1392, 200)]
+    assert sparse_start.dataruns == [(None, 400), (1392, 200)]
 
     sparse_hole = xfs.get("sparse_hole")
     assert sparse_hole.size == 0x258000
     assert sparse_hole.nblocks == 400
-    assert sparse_hole.dataruns() == [(1792, 200), (None, 200), (2192, 200)]
+    assert sparse_hole.dataruns == [(1792, 200), (None, 200), (2192, 200)]
 
     sparse_end = xfs.get("sparse_end")
     assert sparse_end.size == 0x190000
     assert sparse_end.nblocks == 200
-    assert sparse_end.dataruns() == [(2392, 200), (None, 200)]
+    assert sparse_end.dataruns == [(2392, 200), (None, 200)]
 
     sparse_all = xfs.get("sparse_all")
     assert sparse_all.size == 0x500000
     assert sparse_all.nblocks == 0
-    assert sparse_all.dataruns() == [(None, 1280)]
+    assert sparse_all.dataruns == [(None, 1280)]
 
 
 def test_xfs_bigtime(xfs_bigtime_bin: BinaryIO) -> None:
@@ -70,25 +67,8 @@ def test_xfs_bigtime(xfs_bigtime_bin: BinaryIO) -> None:
     assert test_file.crtime_ns == 1680858909223364005
 
 
-@pytest.mark.parametrize(
-    "image_file",
-    [
-        ("tests/data/xfs_symlink_test1.bin.gz"),
-        ("tests/data/xfs_symlink_test2.bin.gz"),
-        ("tests/data/xfs_symlink_test3.bin.gz"),
-        ("tests/data/xfs_symlink_long.bin.gz"),
-    ],
-)
-def test_symlinks(image_file: str) -> None:
+def test_symlinks(xfs_symlink_bin: BinaryIO) -> None:
     path = "/path/to/dir/with/file.ext"
-    expect = b"resolved!\n"
 
-    def resolve(node: INode) -> INode:
-        while node.filetype == stat.S_IFLNK:
-            node = node.link_inode
-        return node
-
-    with gzip.open(image_file, "rb") as disk:
-        link_inode = resolve(XFS(disk).get(path))
-        assert link_inode.nblocks == 1
-        assert link_inode.open().read() == expect
+    xfs = XFS(xfs_symlink_bin)
+    assert xfs.get(path).link == "../../../../other/path/source/to/my/file.ext"
