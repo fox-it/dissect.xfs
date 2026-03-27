@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import stat
 
 from dissect.cstruct import cstruct
