@@ -72,3 +72,19 @@ def test_symlinks(xfs_symlink_bin: BinaryIO) -> None:
 
     xfs = XFS(xfs_symlink_bin)
     assert xfs.get(path).link == "../../../../other/path/source/to/my/file.ext"
+
+
+def test_directory_block_size(xfs_dirblocks_bin: BinaryIO) -> None:
+    """Test directories whose directory blocks are larger than the file system blocks.
+
+    The image was made with ``mkfs.xfs -b size=4096 -n size=16384`` (as Amazon Linux 2023 is): 16 KiB directory
+    blocks on 4 KiB blocks. ``one-block`` fits in one directory block, ``multi-block`` takes several.
+    """
+    xfs = XFS(xfs_dirblocks_bin)
+
+    assert xfs.block_size == 4096
+    assert xfs.dir_block_size == 16384
+
+    for name, count in (("one-block", 150), ("multi-block", 1200)):
+        names = set(xfs.get(name).listdir().keys()) - {".", ".."}
+        assert names == {f"{name}-{number}" for number in range(1, count + 1)}
