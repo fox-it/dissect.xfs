@@ -35,6 +35,7 @@ class XFS:
         self.sb = self.ag[0].sb
 
         self.block_size = self.sb.sb_blocksize
+        self.dir_block_size = self.block_size << self.sb.sb_dirblklog
         self.version = self.sb.sb_versionnum & c_xfs.XFS_SB_VERSION_NUMBITS
         self._has_ftype = (self.version == 5 and self.sb.sb_features_incompat & c_xfs.XFS_SB_FEAT_INCOMPAT_FTYPE) or (
             self.sb.sb_features2 & c_xfs.XFS_SB_VERSION2_FTYPE
@@ -386,33 +387,32 @@ class INode:
             c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_EXTENTS,
             c_xfs.xfs_dinode_fmt.XFS_DINODE_FMT_BTREE,
         ):
-            for block_num in range(self.size // self.xfs.block_size):
-                buf.seek(block_num * self.xfs.block_size)
+            # Directory blocks can be larger than file system blocks (mkfs.xfs -n size=)
+            dir_block_size = self.xfs.dir_block_size
+            for block_num in range(self.size // dir_block_size):
+                buf.seek(block_num * dir_block_size)
 
-                block_data = buf.read(self.xfs.block_size)
+                block_data = buf.read(dir_block_size)
                 block = io.BytesIO(block_data)
-
-                block.seek(-len(c_xfs.xfs_dir2_block_tail), io.SEEK_END)
-                tail = c_xfs.xfs_dir2_block_tail(block)
-                block.seek(0)
-
-                if self.data_extents > 1:
-                    entries_end = self.xfs.block_size
-                else:
-                    entries_end = self.xfs.block_size
-                    entries_end -= len(c_xfs.xfs_dir2_block_tail)
-                    entries_end -= len(c_xfs.xfs_dir2_leaf_entry) * tail.count
 
                 if self.xfs.version == 5:
                     header = c_xfs.xfs_dir3_data_hdr(block)
-                    if header.magic not in (c_xfs.XFS_DIR3_BLOCK_MAGIC, c_xfs.XFS_DIR3_DATA_MAGIC):
-                        # Probably a sparse block
-                        continue
+                    block_magic, data_magic = c_xfs.XFS_DIR3_BLOCK_MAGIC, c_xfs.XFS_DIR3_DATA_MAGIC
                 else:
                     header = c_xfs.xfs_dir2_data_hdr(block)
-                    if header.magic not in (c_xfs.XFS_DIR2_BLOCK_MAGIC, c_xfs.XFS_DIR2_DATA_MAGIC):
-                        # Probably a sparse block
-                        continue
+                    block_magic, data_magic = c_xfs.XFS_DIR2_BLOCK_MAGIC, c_xfs.XFS_DIR2_DATA_MAGIC
+
+                if header.magic == block_magic:
+                    # A single block directory ends with its leaf entries and a tail
+                    tail = c_xfs.xfs_dir2_block_tail(io.BytesIO(block_data[-len(c_xfs.xfs_dir2_block_tail) :]))
+                    entries_end = dir_block_size
+                    entries_end -= len(c_xfs.xfs_dir2_block_tail)
+                    entries_end -= len(c_xfs.xfs_dir2_leaf_entry) * tail.count
+                elif header.magic == data_magic:
+                    entries_end = dir_block_size
+                else:
+                    # Probably a sparse block
+                    continue
 
                 data_entry = c_xfs.xfs_dir2_data_entry_ftype if self.xfs._has_ftype else c_xfs.xfs_dir2_data_entry
 
