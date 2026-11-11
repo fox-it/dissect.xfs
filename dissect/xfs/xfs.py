@@ -481,11 +481,17 @@ class INode:
         run_offset = 0
         expected_runs = (self.size + self.xfs.block_size - 1) // self.xfs.block_size
 
-        for offset, block, count, _ in self._iter_blocks():
+        for offset, block, count, unwritten in self._iter_blocks():
             if offset != run_offset:
                 gap = offset - run_offset
                 runs.append((None, gap))
                 run_offset += gap
+
+            # Unwritten (preallocated) extents read as zeros, so add them as a sparse run
+            if unwritten:
+                runs.append((None, count))
+                run_offset += count
+                continue
 
             # Convert filesystem blocks to logical blocks
             agnum, blknum = fsb_to_bb(block, self.ag.sb.sb_agblklog)

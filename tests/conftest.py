@@ -37,3 +37,8 @@ def xfs_bigtime_bin() -> Iterator[BinaryIO]:
 @pytest.fixture
 def xfs_symlink_bin() -> Iterator[BinaryIO]:
     yield from gzip_file("_data/xfs_symlink_test.bin.gz")
+
+
+@pytest.fixture
+def xfs_unwritten_bin() -> Iterator[BinaryIO]:
+    yield from gzip_file("_data/xfs_unwritten.bin.gz")
